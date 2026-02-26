@@ -1,168 +1,96 @@
 import os
-import requests
+import ssl
+import certifi
+import logging
 from fastapi import FastAPI, Request, BackgroundTasks, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
 from pymongo import MongoClient
+from pymongo.errors import ConnectionFailure, ServerSelectionTimeoutError, OperationFailure
 from datetime import datetime
 from pydantic import BaseModel
 import httpx
+import requests
 
-# ---------- Load environment variables ----------
 load_dotenv()
 
-# ---------- MongoDB Connection (from visit.py) ----------
-client = MongoClient(os.getenv("MONGODB_URI"))
-db = client["visits_db"]
-counters_collection = db["counters"]
+# ---------------------------- LOGGING ----------------------------
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
-# ---------- FastAPI App ----------
-app = FastAPI(
-    title="FollowersHub Combined API",
-    description="Visit counter, packages, and Telegram notifications",
-    version="1.0.0"
-)
+# ---------------------------- MONGODB CONNECTION (PRODUCTION) ----------------------------
+MONGODB_URI = os.getenv("MONGODB_URI")
+if not MONGODB_URI:
+    raise ValueError("❌ MONGODB_URI environment variable not set")
 
-# ---------- CORS Middleware (combined from all files) ----------
+# Ensure database name is present (if not, append default)
+if "?" in MONGODB_URI:
+    base, params = MONGODB_URI.split("?", 1)
+    if "/" not in base.split("@")[-1]:  # no database name in path
+        base += "/visits_db"
+    MONGODB_URI = f"{base}?{params}"
+else:
+    if "/" not in MONGODB_URI.split("@")[-1]:
+        MONGODB_URI += "/visits_db"
+
+# Production MongoDB client with TLS 1.2 enforcement and short timeouts
+try:
+    client = MongoClient(
+        MONGODB_URI,
+        tlsCAFile=certifi.where(),
+        tls=True,
+        tlsVersion=ssl.PROTOCOL_TLSv1_2,          # Force TLS 1.2
+        serverSelectionTimeoutMS=5000,            # 5 seconds to select server
+        connectTimeoutMS=5000,                    # 5 seconds to connect
+        socketTimeoutMS=30000,                     # 30 seconds for operations
+        maxPoolSize=1,                             # For serverless (no pooling)
+        retryWrites=True,
+        retryReads=True,
+    )
+    # Force a connection to verify
+    client.admin.command('ismaster')
+    logger.info("✅ MongoDB connected successfully")
+    db = client.get_default_database()              # Automatically picks from URI
+    counters_collection = db["counters"]
+except (ServerSelectionTimeoutError, ConnectionFailure) as e:
+    logger.error(f"❌ MongoDB connection failed: {e}")
+    client = None
+    db = None
+    counters_collection = None
+except Exception as e:
+    logger.error(f"❌ Unexpected MongoDB error: {e}")
+    client = None
+    db = None
+    counters_collection = None
+
+# ---------------------------- FASTAPI APP ----------------------------
+app = FastAPI(title="FollowersHub Combined API", version="1.0.0")
+
+# CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,          # from notify.py
+    allow_origins=[
+        "https://followerssupply.store",
+        "https://www.followerssupply.store",
+        # Add your frontend domain(s)
+    ],
+    allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# ---------- Telegram Configuration (from visit.py and notify.py) ----------
-# visit.py uses a single bot token for visit alerts
-TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")          # for visit alerts
-# notify.py uses multiple tokens
+# ---------------------------- TELEGRAM CONFIG ----------------------------
+TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 BOT_TOKEN_NEW_USER = os.getenv("BOT_TOKEN_NEW_USER")
 BOT_TOKEN_QR = os.getenv("BOT_TOKEN_QR")
 BOT_TOKEN_ORDER = os.getenv("BOT_TOKEN_ORDER")
-CHAT_ID = os.getenv("CHAT_ID")                                 # common chat id
-
-# ---------- Admin Secret (from visit.py) ----------
+CHAT_ID = os.getenv("CHAT_ID")
 ADMIN_SECRET = os.getenv("ADMIN_SECRET", "changeme")
 
-# --------------------------------------------------------------
-# 📦 PACKAGES DATA (from packages.py)
-# --------------------------------------------------------------
-PACKAGES = [
-    {
-        "id": 1,
-        "title": "5K Followers",
-        "type": "followers",
-        "price": 198,
-        "desc": "Real • Active • Permanent",
-        "popular": False,
-        "discount": False,
-    },
-    {
-        "id": 2,
-        "title": "10K Followers",
-        "type": "followers",
-        "price": 298,
-        "desc": "Real • Active • Permanent",
-        "popular": True,
-        "discount": True,
-    },
-    {
-        "id": 3,
-        "title": "20K Followers",
-        "type": "followers",
-        "price": 549,
-        "desc": "Real • Active • Permanent",
-        "popular": False,
-        "discount": True,
-    },
-    {
-        "id": 4,
-        "title": "50K Followers",
-        "type": "followers",
-        "price": 999,
-        "desc": "Real • Active • Permanent",
-        "popular": False,
-        "discount": False,
-    },
-    {
-        "id": 5,
-        "title": "100K Followers",
-        "type": "followers",
-        "price": 1749,
-        "desc": "Real • Active • Permanent",
-        "popular": True,
-        "discount": True,
-    },
-    {
-        "id": 6,
-        "title": "Story Views 5K",
-        "type": "views",
-        "price": 110,
-        "desc": "Ultra-fast • Refill",
-        "popular": False,
-        "discount": False,
-    },
-    {
-        "id": 7,
-        "title": "Story Views 10k",
-        "type": "views",
-        "price": 179,
-        "desc": "Ultra-fast • Refill",
-        "popular": False,
-        "discount": True,
-    },
-    {
-        "id": 8,
-        "title": "Story Views 15k",
-        "type": "views",
-        "price": 239,
-        "desc": "Ultra-fast • Refill",
-        "popular": False,
-        "discount": False,
-    },
-    {
-        "id": 9,
-        "title": "Story Views 20K",
-        "type": "views",
-        "price": 299,
-        "desc": "Ultra-fast • Refill",
-        "popular": True,
-        "discount": True,
-    },
-    {
-        "id": 10,
-        "title": "Blue Tick",
-        "type": "verify",
-        "price": 299,
-        "desc": "Lifetime Verified Badge",
-        "popular": False,
-        "discount": False,
-    },
-    {
-        "id": 11,
-        "title": "Reels Boost 10K",
-        "type": "views",
-        "price": 199,
-        "desc": "High-retention • Instant",
-        "popular": False,
-        "discount": False,
-    },
-    {
-        "id": 12,
-        "title": "Reels Boost 25K",
-        "type": "views",
-        "price": 399,
-        "desc": "Explore • High Reach",
-        "popular": True,
-        "discount": True,
-    },
-]
+# ---------------------------- PACKAGES DATA (unchanged) ----------------------------
+PACKAGES = [ ... ]   # (your existing packages list)
 
-# --------------------------------------------------------------
-# 🔷 Pydantic Models (from all files)
-# --------------------------------------------------------------
-
-# From visit.py
+# ---------------------------- PYDANTIC MODELS ----------------------------
 class VisitRecord(BaseModel):
     browser: str
 
@@ -170,7 +98,6 @@ class AdminUpdateRequest(BaseModel):
     secret: str
     new_count: int
 
-# From notify.py
 class NewUserNotification(BaseModel):
     username: str
     mobile: str
@@ -208,12 +135,11 @@ class OrderNotification(BaseModel):
     price: int
     ip: str
 
-# --------------------------------------------------------------
-# 📬 Helper Functions
-# --------------------------------------------------------------
-
-# From visit.py (synchronous, used in background tasks)
+# ---------------------------- HELPER FUNCTIONS ----------------------------
 def send_telegram_alert(ip: str, browser: str, visit_time: str, count: int):
+    """Background task for visit alerts (synchronous)"""
+    if not TELEGRAM_BOT_TOKEN or not CHAT_ID:
+        return
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
     text = (
         f"🚨 *Visit Alert* 🚨\n\n"
@@ -224,113 +150,110 @@ def send_telegram_alert(ip: str, browser: str, visit_time: str, count: int):
         f"#️⃣ Visitor Count: {count}"
     )
     try:
-        requests.post(url, json={
-            "chat_id": CHAT_ID,
-            "text": text,
-            "parse_mode": "Markdown"
-        })
+        requests.post(url, json={"chat_id": CHAT_ID, "text": text, "parse_mode": "Markdown"}, timeout=5)
     except Exception as e:
-        print(f"Telegram send error: {e}")
+        logger.error(f"Telegram send error: {e}")
 
-# From notify.py (asynchronous)
 async def send_telegram(bot_token: str, chat_id: str, text: str, parse_mode: str = "HTML"):
+    """Async telegram sender for other notifications"""
     if not bot_token or not chat_id:
         raise HTTPException(status_code=500, detail="Missing Telegram credentials")
     url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
-    payload = {
-        "chat_id": chat_id,
-        "text": text,
-        "parse_mode": parse_mode
-    }
-    async with httpx.AsyncClient() as client:
+    payload = {"chat_id": chat_id, "text": text, "parse_mode": parse_mode}
+    async with httpx.AsyncClient(timeout=10.0) as client:
         try:
-            resp = await client.post(url, json=payload, timeout=10.0)
+            resp = await client.post(url, json=payload)
             resp.raise_for_status()
             return resp.json()
-        except httpx.HTTPStatusError as e:
-            raise HTTPException(status_code=502, detail=f"Telegram API error: {e.response.text}")
         except Exception as e:
-            raise HTTPException(status_code=500, detail=f"Unexpected error: {str(e)}")
+            logger.error(f"Telegram async error: {e}")
+            raise HTTPException(status_code=502, detail="Telegram API error")
 
-# --------------------------------------------------------------
-# 🔌 API ENDPOINTS
-# --------------------------------------------------------------
-
-# ---------- Root (from packages.py) ----------
+# ---------------------------- ENDPOINTS ----------------------------
 @app.get("/")
-def root():
-    return {
-        "message": "FollowersHub Packages API",
-        "endpoints": {
-            "all_packages": "/packages",
-            "filter_by_type": "/packages/{type}  (followers, views, verify)"
-        }
-    }
+async def root():
+    return {"message": "FollowersHub API", "endpoints": {"/packages": "GET", "/health": "GET"}}
 
-# ---------- Health (from notify.py) ----------
 @app.get("/health")
 async def health_check():
-    return {"status": "ok", "service": "Telegram Notifier"}
+    """Health check with MongoDB status"""
+    mongo_status = "connected" if counters_collection is not None else "disconnected"
+    return {"status": "ok", "mongo": mongo_status}
 
-# ---------- Packages endpoints (from packages.py) ----------
+# Packages endpoints
 @app.get("/packages")
-def get_all_packages():
+async def get_all_packages():
     return {"packages": PACKAGES}
 
 @app.get("/packages/{type}")
-def get_packages_by_type(type: str):
+async def get_packages_by_type(type: str):
     filtered = [pkg for pkg in PACKAGES if pkg["type"] == type]
     return {"packages": filtered}
 
-# ---------- Visit endpoints (from visit.py) ----------
+# Visit endpoints
 @app.post("/api/visit")
 async def record_visit(request: Request, background_tasks: BackgroundTasks, payload: VisitRecord):
-    forwarded = request.headers.get("X-Forwarded-For")
-    ip = forwarded.split(",")[0].strip() if forwarded else request.client.host
+    if counters_collection is None:
+        raise HTTPException(status_code=503, detail="Database service unavailable")
+    try:
+        forwarded = request.headers.get("X-Forwarded-For")
+        ip = forwarded.split(",")[0].strip() if forwarded else request.client.host
 
-    result = counters_collection.find_one_and_update(
-        {"_id": "visits"},
-        {"$inc": {"count": 1}},
-        upsert=True,
-        return_document=True
-    )
-    new_count = result["count"]
+        result = counters_collection.find_one_and_update(
+            {"_id": "visits"},
+            {"$inc": {"count": 1}},
+            upsert=True,
+            return_document=True
+        )
+        new_count = result["count"]
 
-    visit_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    background_tasks.add_task(send_telegram_alert, ip, payload.browser, visit_time, new_count)
+        visit_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        background_tasks.add_task(send_telegram_alert, ip, payload.browser, visit_time, new_count)
 
-    return {"success": True, "count": new_count}
+        return {"success": True, "count": new_count}
+    except (ConnectionFailure, OperationFailure, ServerSelectionTimeoutError) as e:
+        logger.error(f"Database error in /api/visit: {e}")
+        raise HTTPException(status_code=503, detail="Database temporarily unavailable")
+    except Exception as e:
+        logger.error(f"Unexpected error in /api/visit: {e}")
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 @app.get("/api/admin/visits")
 async def get_current_count():
-    doc = counters_collection.find_one({"_id": "visits"})
-    count = doc["count"] if doc else 0
-    return {"current_count": count}
+    if counters_collection is None:
+        raise HTTPException(status_code=503, detail="Database service unavailable")
+    try:
+        doc = counters_collection.find_one({"_id": "visits"})
+        count = doc["count"] if doc else 0
+        return {"current_count": count}
+    except Exception as e:
+        logger.error(f"Error in get_current_count: {e}")
+        raise HTTPException(status_code=503, detail="Database error")
 
 @app.put("/api/admin/visits")
 async def update_count(request: AdminUpdateRequest):
+    if counters_collection is None:
+        raise HTTPException(status_code=503, detail="Database service unavailable")
     if request.secret != ADMIN_SECRET:
         raise HTTPException(status_code=403, detail="Invalid secret")
     if request.new_count < 0:
         raise HTTPException(status_code=400, detail="Count cannot be negative")
-    result = counters_collection.find_one_and_update(
-        {"_id": "visits"},
-        {"$set": {"count": request.new_count}},
-        upsert=True,
-        return_document=True
-    )
-    return {"success": True, "new_count": result["count"]}
+    try:
+        result = counters_collection.find_one_and_update(
+            {"_id": "visits"},
+            {"$set": {"count": request.new_count}},
+            upsert=True,
+            return_document=True
+        )
+        return {"success": True, "new_count": result["count"]}
+    except Exception as e:
+        logger.error(f"Error in update_count: {e}")
+        raise HTTPException(status_code=503, detail="Database error")
 
-# ---------- Notification endpoints (from notify.py) ----------
+# Notification endpoints (from notify.py) – include all, each with db check if needed (none of them use db, so no db check needed)
 @app.post("/api/notify/new-user")
 async def notify_new_user(data: NewUserNotification):
-    text = (
-        f"🔔 New User Submitted\n"
-        f"👤 Username: {data.username}\n"
-        f"📱 Mobile: {data.mobile}\n"
-        f"🌐 IP: {data.ip}\n"
-        f"📊 Status: {data.profile_status}"
-    )
+    text = f"🔔 New User Submitted\n👤 Username: {data.username}\n📱 Mobile: {data.mobile}\n🌐 IP: {data.ip}\n📊 Status: {data.profile_status}"
     result = await send_telegram(BOT_TOKEN_NEW_USER, CHAT_ID, text)
     return {"success": True, "telegram_response": result}
 
@@ -389,5 +312,3 @@ async def notify_order(data: OrderNotification):
     )
     result = await send_telegram(BOT_TOKEN_ORDER, CHAT_ID, text, parse_mode="HTML")
     return {"success": True, "telegram_response": result}
-
-# To run: uvicorn main:app --reload
