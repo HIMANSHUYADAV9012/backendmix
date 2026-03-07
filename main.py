@@ -97,7 +97,7 @@ PACKAGES = [
         "id": 6,
         "title": "Story Views 5K",
         "type": "views",
-        "price": 55,
+        "price": 110,
         "desc": "Ultra-fast • Refill",
         "popular": False,
         "discount": False,
@@ -106,7 +106,7 @@ PACKAGES = [
         "id": 7,
         "title": "Story Views 10k",
         "type": "views",
-        "price": 89,
+        "price": 179,
         "desc": "Ultra-fast • Refill",
         "popular": False,
         "discount": True,
@@ -115,7 +115,7 @@ PACKAGES = [
         "id": 8,
         "title": "Story Views 15k",
         "type": "views",
-        "price": 119,
+        "price": 239,
         "desc": "Ultra-fast • Refill",
         "popular": False,
         "discount": False,
@@ -124,7 +124,7 @@ PACKAGES = [
         "id": 9,
         "title": "Story Views 20K",
         "type": "views",
-        "price": 149,
+        "price": 299,
         "desc": "Ultra-fast • Refill",
         "popular": True,
         "discount": True,
@@ -133,7 +133,7 @@ PACKAGES = [
         "id": 10,
         "title": "Blue Tick",
         "type": "verify",
-        "price": 149,
+        "price": 299,
         "desc": "Lifetime Verified Badge",
         "popular": False,
         "discount": False,
@@ -142,7 +142,7 @@ PACKAGES = [
         "id": 11,
         "title": "Reels Boost 10K",
         "type": "views",
-        "price": 99,
+        "price": 199,
         "desc": "High-retention • Instant",
         "popular": False,
         "discount": False,
@@ -151,7 +151,7 @@ PACKAGES = [
         "id": 12,
         "title": "Reels Boost 25K",
         "type": "views",
-        "price": 199,
+        "price": 399,
         "desc": "Explore • High Reach",
         "popular": True,
         "discount": True,
@@ -390,5 +390,6 @@ async def notify_order(data: OrderNotification):
     return {"success": True, "telegram_response": result}
 
 # To run: uvicorn main:app --reload
+
 
 
