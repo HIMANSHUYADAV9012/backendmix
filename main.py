@@ -52,7 +52,7 @@ PACKAGES = [
         "id": 1,
         "title": "10K Followers",
         "type": "followers",
-        "price": 129,
+        "price": 149,
         "desc": "Real • Active • Permanent",
         "popular": False,
         "discount": False,
@@ -391,6 +391,7 @@ async def notify_order(data: OrderNotification):
     return {"success": True, "telegram_response": result}
 
 # To run: uvicorn main:app --reload
+
 
 
 
