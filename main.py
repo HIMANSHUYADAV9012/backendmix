@@ -50,27 +50,27 @@ ADMIN_SECRET = os.getenv("ADMIN_SECRET", "changeme")
 PACKAGES = [
     {
         "id": 1,
-        "title": "5K Followers",
+        "title": "10K Followers",
         "type": "followers",
-        "price": 99,
+        "price": 129,
         "desc": "Real • Active • Permanent",
         "popular": False,
         "discount": False,
     },
     {
         "id": 2,
-        "title": "10K Followers",
+        "title": "20K Followers",
         "type": "followers",
-        "price": 149,
+        "price": 199,
         "desc": "Real • Active • Permanent",
         "popular": True,
         "discount": False,
     },
     {
         "id": 3,
-        "title": "20K Followers",
+        "title": "30K Followers",
         "type": "followers",
-        "price": 279,
+        "price": 259,
         "desc": "Real • Active • Permanent",
         "popular": False,
         "discount": True,
@@ -79,7 +79,7 @@ PACKAGES = [
         "id": 4,
         "title": "50K Followers",
         "type": "followers",
-        "price": 499,
+        "price": 399,
         "desc": "Real • Active • Permanent",
         "popular": False,
         "discount": False,
@@ -88,11 +88,12 @@ PACKAGES = [
         "id": 5,
         "title": "100K Followers",
         "type": "followers",
-        "price": 899,
+        "price": 699,
         "desc": "Real • Active • Permanent",
         "popular": True,
         "discount": True,
     },
+
     {
         "id": 6,
         "title": "Story Views 5K",
@@ -390,6 +391,7 @@ async def notify_order(data: OrderNotification):
     return {"success": True, "telegram_response": result}
 
 # To run: uvicorn main:app --reload
+
 
 
 
